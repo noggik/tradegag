@@ -1,6 +1,6 @@
 local Config = {
     TargetPlayer = "",
-    SeedName = {"ALL"},
+    ItemFilter = {"ALL"},
     SendDelay = 5,
     NoteMessage = "Here is a gift!",
     AutoSend = true,
@@ -14,7 +14,7 @@ local Config = {
 }
 
 local TARGET_PLAYER = Config.TargetPlayer
-local SEED_NAME = Config.SeedName
+local ITEM_FILTER = Config.ItemFilter
 local SEND_DELAY = Config.SendDelay
 local NOTE_MESSAGE = Config.NoteMessage
 local AUTO_SEND = Config.AutoSend
@@ -36,10 +36,35 @@ local Networking = require(ReplicatedStorage.SharedModules.Networking)
 local MailboxController = require(LocalPlayer.PlayerScripts.Controllers.MailboxController)
 local SeedImages = ReplicatedStorage.SharedModules.SeedData:FindFirstChild("SeedImages")
 
+local attributeToCategoryMap = {
+    SeedTool = "Seeds",
+    Fruit = "Fruits",
+    Sprinkler = "Sprinklers",
+    WateringCan = "WateringCans",
+    Mushroom = "Mushrooms",
+    Gnome = "Gnomes",
+    Raccoon = "Raccoons",
+    Crate = "Crates",
+    Teleporter = "Teleporters",
+    SeedPack = "SeedPacks",
+    Wheelbarrow = "Wheelbarrows",
+    Trowel = "Trowels",
+    Crowbar = "Crowbars",
+    Ladder = "Ladders",
+    FreezeRay = "FreezeRays",
+    PowerHose = "PowerHoses",
+    Rake = "Rakes",
+    Lantern = "Lanterns",
+    Sign = "Signs",
+    EmptyPot = "EmptyPots",
+    Flashbang = "Flashbangs",
+    Bird = "Birds",
+}
+
 local UiState = {
     PlayerButtons = {},
-    SeedButtons = {},
-    SelectedSeeds = {},
+    ItemButtons = {},
+    SelectedItems = {},
     Sending = false,
     AutoThread = nil,
     AutoClaimThread = nil,
@@ -49,11 +74,11 @@ local UiState = {
     HeadshotLoading = false,
 }
 
-local function GetSelectedSeedList()
+local function GetSelectedItemList()
     local selected = {}
-    for seedName, enabled in pairs(UiState.SelectedSeeds) do
+    for itemName, enabled in pairs(UiState.SelectedItems) do
         if enabled then
-            table.insert(selected, seedName)
+            table.insert(selected, itemName)
         end
     end
     table.sort(selected)
@@ -66,22 +91,22 @@ local function GetSelectedSeedList()
     return selected
 end
 
-local function SetSelectedSeeds(seedList)
-    UiState.SelectedSeeds = {}
-    for _, seedName in ipairs(seedList or {"ALL"}) do
-        UiState.SelectedSeeds[seedName] = true
+local function SetSelectedItems(itemList)
+    UiState.SelectedItems = {}
+    for _, itemName in ipairs(itemList or {"ALL"}) do
+        UiState.SelectedItems[itemName] = true
     end
-    if UiState.SelectedSeeds["ALL"] then
-        for seedName in pairs(UiState.SelectedSeeds) do
-            if seedName ~= "ALL" then
-                UiState.SelectedSeeds[seedName] = nil
+    if UiState.SelectedItems["ALL"] then
+        for itemName in pairs(UiState.SelectedItems) do
+            if itemName ~= "ALL" then
+                UiState.SelectedItems[itemName] = nil
             end
         end
     end
-    SEED_NAME = GetSelectedSeedList()
+    ITEM_FILTER = GetSelectedItemList()
 end
 
-SetSelectedSeeds(SEED_NAME)
+SetSelectedItems(ITEM_FILTER)
 
 local function GetTargetPlayer()
     if not TARGET_PLAYER or TARGET_PLAYER == "" then
@@ -96,26 +121,89 @@ local function GetTargetPlayer()
     return nil
 end
 
-local function GetAvailableSeeds()
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    local seedMap = {
+local function GetItemInfo(tool)
+    if not tool:IsA("Tool") then
+        return nil
+    end
+
+    if tool:GetAttribute("HarvestedFruit") == true then
+        local itemId = tool:GetAttribute("Id")
+        if itemId then
+            local fruitName = tool:GetAttribute("Fruit") or "Fruit"
+            return {
+                Category = "HarvestedFruits",
+                ItemKey = itemId,
+                DisplayName = fruitName .. " (Harvested)",
+                FilterName = fruitName,
+                Count = 1,
+            }
+        end
+    end
+
+    local petId = tool:GetAttribute("PetId")
+    if type(petId) == "string" and petId ~= "" then
+        local petName = tool:GetAttribute("Pet") or "Pet"
+        return {
+            Category = "Pets",
+            ItemKey = petId,
+            DisplayName = petName,
+            FilterName = petName,
+            Count = 1,
+        }
+    end
+
+    for attrName, category in pairs(attributeToCategoryMap) do
+        local value = tool:GetAttribute(attrName)
+        if value then
+            local itemKey = value
+            local displayName = value
+            local filterName = value
+
+            if attrName == "Fruit" then
+                local mutation = tool:GetAttribute("Mutation")
+                local weight = tool:GetAttribute("Weight")
+                filterName = value
+                if mutation then
+                    displayName = value .. " (" .. mutation .. ")"
+                end
+                if weight then
+                    displayName = displayName .. " " .. tostring(math.floor(weight * 1000)) .. "g"
+                end
+            end
+
+            local count = tool:GetAttribute("Count") or 1
+
+            return {
+                Category = category,
+                ItemKey = itemKey,
+                DisplayName = displayName,
+                FilterName = filterName,
+                Count = count,
+            }
+        end
+    end
+
+    return nil
+end
+
+local function GetAvailableItems()
+    local itemMap = {
         ALL = true,
     }
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
     if backpack then
         for _, tool in ipairs(backpack:GetChildren()) do
-            if tool:IsA("Tool") then
-                local seedName = tool:GetAttribute("SeedTool")
-                if type(seedName) == "string" and seedName ~= "" then
-                    seedMap[seedName] = true
-                end
+            local itemInfo = GetItemInfo(tool)
+            if itemInfo then
+                itemMap[itemInfo.DisplayName] = true
             end
         end
     end
-    local seeds = {}
-    for seedName in pairs(seedMap) do
-        table.insert(seeds, seedName)
+    local items = {}
+    for itemName in pairs(itemMap) do
+        table.insert(items, itemName)
     end
-    table.sort(seeds, function(a, b)
+    table.sort(items, function(a, b)
         if a == "ALL" then
             return true
         end
@@ -124,14 +212,14 @@ local function GetAvailableSeeds()
         end
         return a < b
     end)
-    return seeds
+    return items
 end
 
-local function GetSeedImage(seedName)
-    if seedName == "ALL" or not SeedImages then
+local function GetItemImage(itemName)
+    if itemName == "ALL" or not SeedImages then
         return ""
     end
-    local imageValue = SeedImages:FindFirstChild(seedName)
+    local imageValue = SeedImages:FindFirstChild(itemName)
     if not imageValue then
         return ""
     end
@@ -194,91 +282,94 @@ local function QueuePlayerHeadshot(userId, imageLabel)
     end)
 end
 
-local function SendAllSeedsComplete()
+local function SendAllItemsComplete()
     if UiState.Sending then
-        warn("[Auto Send Seed] Sending in progress")
+        warn("[Auto Send] Sending in progress")
         return
     end
     UiState.Sending = true
 
-    if not TARGET_PLAYER or TARGET_PLAYER == "" or TARGET_PLAYER == "ชื่อผู้เล่น" then
+    if not TARGET_PLAYER or TARGET_PLAYER == "" then
         UiState.Sending = false
-        warn("[Auto Send Seed] กรุณาใส่ชื่อผู้เล่นที่จะส่ง")
+        warn("[Auto Send] กรุณาใส่ชื่อผู้เล่นที่จะส่ง")
         return
     end
 
     local targetPlayer = GetTargetPlayer()
     if not targetPlayer then
         UiState.Sending = false
-        warn("[Auto Send Seed] ไม่พบผู้เล่น: " .. TARGET_PLAYER)
+        warn("[Auto Send] ไม่พบผู้เล่น: " .. TARGET_PLAYER)
         return
     end
 
     local backpack = LocalPlayer:WaitForChild("Backpack")
-    local allSeeds = {}
-    local isAllSeeds = table.find(SEED_NAME, "ALL") ~= nil
+    local allItems = {}
+    local isAllItems = table.find(ITEM_FILTER, "ALL") ~= nil
     for _, tool in ipairs(backpack:GetChildren()) do
-        if tool:IsA("Tool") and tool:GetAttribute("SeedTool") then
-            local seedName = tool:GetAttribute("SeedTool")
-            local count = tool:GetAttribute("Count") or 1
-            if isAllSeeds or table.find(SEED_NAME, seedName) then
-                allSeeds[seedName] = (allSeeds[seedName] or 0) + count
+        local itemInfo = GetItemInfo(tool)
+        if itemInfo and (isAllItems or table.find(ITEM_FILTER, itemInfo.FilterName)) then
+            local key = itemInfo.Category .. ":" .. itemInfo.ItemKey
+            if not allItems[key] then
+                allItems[key] = {
+                    Category = itemInfo.Category,
+                    ItemKey = itemInfo.ItemKey,
+                    DisplayName = itemInfo.DisplayName,
+                    Count = 0,
+                }
             end
+            allItems[key].Count = allItems[key].Count + itemInfo.Count
         end
     end
 
-    local totalSeeds = 0
-    for _, count in pairs(allSeeds) do
-        totalSeeds = totalSeeds + count
+    local totalItems = 0
+    for _, itemData in pairs(allItems) do
+        totalItems = totalItems + itemData.Count
     end
-    if totalSeeds == 0 then
+    if totalItems == 0 then
         UiState.Sending = false
-        warn("[Auto Send Seed] ไม่มี Seed ที่จะส่ง")
+        warn("[Auto Send] ไม่มี Item ที่จะส่ง")
         return
     end
 
-    print(string.format("[Auto Send Seed] เริ่มส่ง %d Seed ให้ %s", totalSeeds, targetPlayer.Name))
+    print(string.format("[Auto Send] เริ่มส่ง %d Items ให้ %s", totalItems, targetPlayer.Name))
     pcall(function()
         MailboxController:_pickRecipient(targetPlayer.UserId, targetPlayer.DisplayName)
     end)
     task.wait(PICK_DELAY)
 
-    local seedQueue = {}
-    for seedName, count in pairs(allSeeds) do
-        if count > 0 then
-            table.insert(seedQueue, {
-                Name = seedName,
-                Count = count
-            })
+    local itemQueue = {}
+    for _, itemData in pairs(allItems) do
+        if itemData.Count > 0 then
+            table.insert(itemQueue, itemData)
         end
     end
 
     local totalSent = 0
     local batchNumber = 1
     local queueIndex = 1
-    while totalSent < totalSeeds and queueIndex <= #seedQueue do
+    while totalSent < totalItems and queueIndex <= #itemQueue do
         local batchCount = 0
         local itemsToSend = {}
 
-        while batchCount < 20 and queueIndex <= #seedQueue do
-            local seedData = seedQueue[queueIndex]
-            local sendCount = math.min(seedData.Count, 20 - batchCount)
+        while batchCount < 20 and queueIndex <= #itemQueue do
+            local itemData = itemQueue[queueIndex]
+            local sendCount = math.min(itemData.Count, 20 - batchCount)
 
             for _ = 1, sendCount do
-                local itemKey = "Seeds:" .. seedData.Name
+                local fullItemKey = itemData.Category .. ":" .. itemData.ItemKey
                 pcall(function()
-                    MailboxController:_addToSend(itemKey, "Seeds", seedData.Name, nil)
+                    MailboxController:_addToSend(fullItemKey, itemData.Category, itemData.ItemKey, nil)
                 end)
                 table.insert(itemsToSend, {
-                    Category = "Seeds",
-                    ItemKey = seedData.Name,
+                    Category = itemData.Category,
+                    ItemKey = itemData.ItemKey,
                     Count = 1
                 })
                 batchCount = batchCount + 1
             end
 
-            seedData.Count = seedData.Count - sendCount
-            if seedData.Count <= 0 then
+            itemData.Count = itemData.Count - sendCount
+            if itemData.Count <= 0 then
                 queueIndex = queueIndex + 1
             end
         end
@@ -298,9 +389,9 @@ local function SendAllSeedsComplete()
 
         if success and result then
             totalSent = totalSent + batchCount
-            print(string.format("[Auto Send Seed] Batch #%d: ส่ง %d Seed สำเร็จ (รวม %d/%d)", batchNumber, batchCount, totalSent, totalSeeds))
+            print(string.format("[Auto Send] Batch #%d: ส่ง %d Items สำเร็จ (รวม %d/%d)", batchNumber, batchCount, totalSent, totalItems))
         else
-            warn(string.format("[Auto Send Seed] Batch #%d ล้มเหลว: %s", batchNumber, tostring(message or "Unknown error")))
+            warn(string.format("[Auto Send] Batch #%d ล้มเหลว: %s", batchNumber, tostring(message or "Unknown error")))
         end
 
         pcall(function()
@@ -308,7 +399,7 @@ local function SendAllSeedsComplete()
         end)
         task.wait(RESET_DELAY)
 
-        if totalSent < totalSeeds and queueIndex <= #seedQueue then
+        if totalSent < totalItems and queueIndex <= #itemQueue then
             pcall(function()
                 MailboxController:_pickRecipient(targetPlayer.UserId, targetPlayer.DisplayName)
             end)
@@ -322,7 +413,7 @@ local function SendAllSeedsComplete()
     pcall(function()
         MailboxController:_resetToPlayerList()
     end)
-    print(string.format("[Auto Send Seed] เสร็จสิ้น! ส่งทั้งหมด %d Seed ให้ %s", totalSent, targetPlayer.Name))
+    print(string.format("[Auto Send] เสร็จสิ้น! ส่งทั้งหมด %d Items ให้ %s", totalSent, targetPlayer.Name))
     UiState.Sending = false
 end
 
@@ -336,7 +427,7 @@ local function StartAutoSendLoop()
             if not AUTO_SEND then
                 break
             end
-            pcall(SendAllSeedsComplete)
+            pcall(SendAllItemsComplete)
         end
         UiState.AutoThread = nil
     end)
@@ -755,13 +846,13 @@ local refreshPlayersButton = CreateActionButton(selectPlayerFrame, "Refresh Play
 
 CreateLabel(itemSendFrame, "Your Inventory", 0)
 local autoTradeButton = CreateActionButton(itemSendFrame, AUTO_TRADE and "Auto Accept Trade ON" or "Auto Accept Trade OFF", AUTO_TRADE and Color3.fromRGB(120, 80, 200) or Color3.fromRGB(55, 40, 90), 22)
-local seedScroll = CreateScroll(itemSendFrame, 64, 112)
+local itemScroll = CreateScroll(itemSendFrame, 64, 112)
 CreateLabel(itemSendFrame, "Sending Settings", 186)
 CreateLabel(itemSendFrame, "Mail Note", 208)
 local noteBox = CreateBox(itemSendFrame, "Mail note", NOTE_MESSAGE, 230)
 CreateLabel(itemSendFrame, "Auto Delay (seconds)", 272)
 local delayBox = CreateBox(itemSendFrame, "5", tostring(SEND_DELAY), 294)
-local refreshSeedsButton = CreateActionButton(itemSendFrame, "Refresh Seeds", Color3.fromRGB(55, 40, 90), 326, 0.48, 0)
+local refreshItemsButton = CreateActionButton(itemSendFrame, "Refresh Items", Color3.fromRGB(55, 40, 90), 326, 0.48, 0)
 local autoToggleButton = CreateActionButton(itemSendFrame, AUTO_SEND and "Auto Send ON" or "Auto Send OFF", AUTO_SEND and Color3.fromRGB(120, 80, 200) or Color3.fromRGB(55, 40, 90), 326, 0.48, 0.52)
 
 local statusLabel = Instance.new("TextLabel")
@@ -922,48 +1013,48 @@ local function SetPage(isSendPage)
     receiveTabButton.BackgroundColor3 = not isSendPage and Color3.fromRGB(120, 80, 200) or Color3.fromRGB(60, 45, 95)
 end
 
-local function UpdateSeedButtons()
-    for seedName, button in pairs(UiState.SeedButtons) do
-        local selected = UiState.SelectedSeeds[seedName] == true
+local function UpdateItemButtons()
+    for itemName, button in pairs(UiState.ItemButtons) do
+        local selected = UiState.SelectedItems[itemName] == true
         button.BackgroundColor3 = selected and Color3.fromRGB(120, 80, 200) or Color3.fromRGB(40, 28, 70)
         local itemText = button:FindFirstChild("ItemText")
         if itemText then
-            itemText.Text = selected and ("[x] " .. seedName) or ("[ ] " .. seedName)
+            itemText.Text = selected and ("[x] " .. itemName) or ("[ ] " .. itemName)
         else
-            button.Text = selected and ("[x] " .. seedName) or ("[ ] " .. seedName)
+            button.Text = selected and ("[x] " .. itemName) or ("[ ] " .. itemName)
         end
     end
 end
 
-local function RefreshSeedList()
-    for _, button in pairs(UiState.SeedButtons) do
+local function RefreshItemList()
+    for _, button in pairs(UiState.ItemButtons) do
         button:Destroy()
     end
-    UiState.SeedButtons = {}
+    UiState.ItemButtons = {}
 
-    for _, seedName in ipairs(GetAvailableSeeds()) do
-        local button = CreateListButton(seedScroll, seedName, GetSeedImage(seedName))
-        UiState.SeedButtons[seedName] = button
+    for _, itemName in ipairs(GetAvailableItems()) do
+        local button = CreateListButton(itemScroll, itemName, GetItemImage(itemName))
+        UiState.ItemButtons[itemName] = button
         button.MouseButton1Click:Connect(function()
-            if seedName == "ALL" then
-                SetSelectedSeeds({"ALL"})
+            if itemName == "ALL" then
+                SetSelectedItems({"ALL"})
             else
-                UiState.SelectedSeeds["ALL"] = nil
-                UiState.SelectedSeeds[seedName] = not UiState.SelectedSeeds[seedName]
-                if next(UiState.SelectedSeeds) == nil then
-                    UiState.SelectedSeeds["ALL"] = true
+                UiState.SelectedItems["ALL"] = nil
+                UiState.SelectedItems[itemName] = not UiState.SelectedItems[itemName]
+                if next(UiState.SelectedItems) == nil then
+                    UiState.SelectedItems["ALL"] = true
                 end
-                SEED_NAME = GetSelectedSeedList()
+                ITEM_FILTER = GetSelectedItemList()
             end
-            UpdateSeedButtons()
-            SetStatus("Selected seeds: " .. table.concat(SEED_NAME, ", "))
+            UpdateItemButtons()
+            SetStatus("Selected items: " .. table.concat(ITEM_FILTER, ", "))
         end)
     end
 
-    if #GetSelectedSeedList() == 0 then
-        SetSelectedSeeds({"ALL"})
+    if #GetSelectedItemList() == 0 then
+        SetSelectedItems({"ALL"})
     end
-    UpdateSeedButtons()
+    UpdateItemButtons()
 end
 
 local function HighlightPlayerButtons()
@@ -1032,9 +1123,9 @@ refreshPlayersButton.MouseButton1Click:Connect(function()
     SetStatus("Player list refreshed", Color3.fromRGB(194, 255, 163))
 end)
 
-refreshSeedsButton.MouseButton1Click:Connect(function()
-    RefreshSeedList()
-    SetStatus("Seed list refreshed", Color3.fromRGB(194, 255, 163))
+refreshItemsButton.MouseButton1Click:Connect(function()
+    RefreshItemList()
+    SetStatus("Item list refreshed", Color3.fromRGB(194, 255, 163))
 end)
 
 autoTradeButton.MouseButton1Click:Connect(function()
@@ -1111,7 +1202,7 @@ end)
 
 screenGui.Enabled = true
 RefreshPlayerList()
-RefreshSeedList()
+RefreshItemList()
 UpdateAutoToggle()
 UpdateAutoTradeToggle()
 SetPage(true)
@@ -1133,12 +1224,12 @@ local Backpack = LocalPlayer:FindFirstChild("Backpack")
 if Backpack then
     Backpack.ChildAdded:Connect(function()
         if screenGui.Parent then
-            RefreshSeedList()
+            RefreshItemList()
         end
     end)
     Backpack.ChildRemoved:Connect(function()
         if screenGui.Parent then
-            RefreshSeedList()
+            RefreshItemList()
         end
     end)
 end
@@ -1149,7 +1240,7 @@ local fade = TweenService:Create(mainFrame, TweenInfo.new(0.2, Enum.EasingStyle.
 mainFrame.BackgroundTransparency = 1
 fade:Play()
 
-print("[Auto Send Seed] UI loaded")
+print("[Auto Send] UI loaded")
 if AUTO_SEND then
     StartAutoSendLoop()
 end
